@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'home.dart';
 import 'sign_up.dart'; 
 import 'forgot_password.dart'; 
+import 'dart:developer'; // For log, if you want to use it here too
 
 final supabase = Supabase.instance.client;
 
@@ -38,7 +39,7 @@ class _SignInState extends State<SignIn> {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
     
-    print('Sign in attempt - Email: "$email", Password length: \${password.length}');
+    log('Sign in attempt - Email: "$email", Password length: ${password.length}');
 
     try {
       final res = await supabase.auth.signInWithPassword(
@@ -46,7 +47,7 @@ class _SignInState extends State<SignIn> {
         password: password,
       );
 
-      print('✅ Sign in successful for user: \${res.user?.email}');
+      log('✅ Sign in successful for user: ${res.user?.email}');
       
       if (mounted && res.user != null) {
         final profileResponse = await supabase
@@ -56,17 +57,17 @@ class _SignInState extends State<SignIn> {
             .single();
         
         final username = profileResponse['username'] as String? ?? res.user!.email?.split('@').first ?? 'User';
-        print('✅ Username fetched: $username');
+        log('✅ Username fetched: $username');
 
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (context) => Home(username: username)),
         );
       }
     } on AuthException catch (e) {
-      print('❌ AuthException: \${e.message}');
-      print('❌ Error details: \${e.toString()}');
+      log('❌ AuthException: ${e.message}');
+      log('❌ Error details: ${e.toString()}');
       
-      String errorMessage = 'Sign in failed: \${e.message}';
+      String errorMessage = 'Sign in failed: ${e.message}';
       if (e.message.contains('Invalid login credentials')) {
         errorMessage = 'Invalid email or password. Please check your credentials.';
       } else if (e.message.contains('Email not confirmed')) {
@@ -83,11 +84,11 @@ class _SignInState extends State<SignIn> {
         );
       }
     } catch (e) {
-      print('❌ General error: $e');
+      log('❌ General error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('An unexpected error occurred: \${e.toString()}'),
+            content: Text('An unexpected error occurred: ${e.toString()}'),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
@@ -96,6 +97,67 @@ class _SignInState extends State<SignIn> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() => _isLoading = true);
+    log('Attempting Google Sign-In with redirect: io.supabase.circle://login-callback');
+
+    try {
+      final bool success = await supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'io.supabase.circle://login-callback',
+      );
+
+      if (success) {
+        log('✅ Google OAuth flow initiated successfully. Waiting for app to reopen via deep link and onAuthStateChange to fire.');
+        // The onAuthStateChange listener (likely in main.dart) will handle navigation
+        // once the user is redirected back to the app and the session is updated.
+      } else {
+        log('⚠️ Google OAuth flow could not be initiated (signInWithOAuth returned false).');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Could not start Google Sign-In. Please ensure you have a browser and try again.'),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        }
+      }
+    } on AuthException catch (e) {
+      log('❌ Google Sign-In AuthException: ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Google Sign-In failed: ${e.message}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } catch (e) {
+      log('❌ Google Sign-In General error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An unexpected error occurred during Google Sign-In: ${e.toString()}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      // This will set isLoading to false if the OAuth initiation failed or if an error occurred.
+      // If initiation was successful, the user is redirected. If they cancel and return,
+      // or if the widget rebuilds for other reasons, isLoading will be reset.
+      if (mounted) {
+        // Only set isLoading to false here if the oauth flow didn't initiate successfully.
+        // If 'success' was true, the app is waiting for redirect and auth state change.
+        // However, the existing generic finally block is usually fine.
+        // For more precise control, you might only set _isLoading = false in the `else` and `catch` blocks.
+        // But let's stick to the current structure which resets it generally.
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -143,7 +205,6 @@ class _SignInState extends State<SignIn> {
                     child: GestureDetector(
                       onTap: () {
                         if (_isLoading) return;
-                        // Ensuring navigation is to ForgotPasswordScreen
                         Navigator.push(context, MaterialPageRoute(builder: (context) => const ForgotPassword()));
                       },
                       child: const Text('Forgot your password?', style: TextStyle(color: Color(0xFF5F5F5F), fontSize: 14)),
@@ -165,7 +226,7 @@ class _SignInState extends State<SignIn> {
                     ),
                   ),
                   
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 10),
                   Row(
                     children: <Widget>[
                       const Flexible(child: Divider(thickness: 1, indent: 10, endIndent: 5, color: Colors.grey)),
@@ -176,47 +237,30 @@ class _SignInState extends State<SignIn> {
                       const Flexible(child: Divider(thickness: 1, indent: 5, endIndent: 10, color: Colors.grey)),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: <Widget>[
-                      GestureDetector(
-                        onTap: () {
-                          // TODO: Implement Facebook Sign In
-                          print('Facebook sign-in tapped');
-                        },
-                        child: CircleAvatar(
-                          radius: 25,
-                          backgroundColor: Colors.white,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4.0), // Same padding as Google
-                            child: SvgPicture.asset(
-                              'assets/icons/facebook_icon.svg',
-                              height: 50.0,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 55,
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isLoading ? null : _handleGoogleSignIn,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF1B2E47), // Text and icon color
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(53),
+                          side: const BorderSide(color: Color(0xFF5F5F5F), width: 1),
                         ),
+                        elevation: 0,
                       ),
-                      const SizedBox(width: 35), // Spacer between icons
-                      GestureDetector(
-                        onTap: () {
-                          // TODO: Implement Google Sign In
-                          print('Google sign-in tapped');
-                        },
-                        child: CircleAvatar(
-                          radius: 22,
-                          backgroundColor: Colors.white,
-                          child: Padding(
-                            padding: const EdgeInsets.all(4.0),
-                            child: SvgPicture.asset(
-                              'assets/icons/google_icon.svg',
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        ),
+                      icon: SvgPicture.asset(
+                        'assets/icons/google_icon.svg',
+                        height: 28, // A good size for the icon within the button
                       ),
-                    ],
+                      label: const Text(
+                        'Join with Google',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.w400),
+                      ),
+                    ),
                   ),
 
                   const SizedBox(height: 40),

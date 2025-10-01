@@ -23,17 +23,17 @@
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 
-	<!-- ADD THESE FOR OAUTH -->
+	<!-- OAUTH CONFIGURATION -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.example.circle</string>
+			<string>io.supabase.circle.auth</string> 
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.example.circle</string>
+				<string>io.supabase.circle</string> 
 			</array>
 		</dict>
 	</array>
@@ -42,9 +42,9 @@
 	<array>
 		<string>https</string>
 		<string>http</string>
-		<string>com.example.circle</string>
+		<string>io.supabase.circle</string> 
 	</array>
-	<!-- END OAUTH CONFIG -->
+	<!-- END OAUTH CONFIGURATION -->
 
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
