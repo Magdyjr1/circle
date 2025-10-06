@@ -1,10 +1,7 @@
-// lib/sign_up.dart
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:crypto/crypto.dart';
-import 'dart:convert';
+import 'dart:developer';
 import 'otp.dart';
 
 class SignUpScreen extends StatefulWidget {
@@ -22,18 +19,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
-  bool _checkingAvailability = false;
-  String? _emailError;
-  String? _usernameError;
   bool _isPasswordObscured = true;
   bool _isConfirmPasswordObscured = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _userNameController.addListener(() => _onUsernameChanged(_userNameController.text));
-    _emailController.addListener(() => _onEmailChanged(_emailController.text));
-  }
 
   @override
   void dispose() {
@@ -45,193 +32,104 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  String _hashPassword(String password) {
-    final bytes = utf8.encode(password + 'your-secret-salt');
-    final digest = sha256.convert(bytes);
-    return digest.toString();
-  }
-
-  Future<void> _checkAvailability() async {
-    final email = _emailController.text.trim();
-    final username = _userNameController.text.trim();
-
-    if (email.isEmpty && username.isEmpty) return;
-    if (_checkingAvailability) return;
-
-    setState(() {
-      _checkingAvailability = true;
-      _emailError = null;
-      _usernameError = null;
-    });
-
-    try {
-      final supabase = Supabase.instance.client;
-      final result = await supabase.rpc(
-        'check_signup_availability',
-        params: {'p_check_email': email, 'p_check_username': username},
-      );
-      if (!mounted) return;
-      setState(() {
-        if (result['email_available'] == false) _emailError = 'Email already registered';
-        if (result['username_available'] == false) _usernameError = 'Username already taken';
-      });
-    } catch (e) {
-      print('Availability check error: $e');
-    } finally {
-      if (mounted) setState(() => _checkingAvailability = false);
-    }
-  }
-
-  void _onEmailChanged(String value) {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && value == _emailController.text && value.length > 3 && value.contains('@')) {
-        _checkAvailability();
-      }
-    });
-  }
-
-  void _onUsernameChanged(String value) {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && value == _userNameController.text && value.length > 2) {
-        _checkAvailability();
-      }
-    });
-  }
-
   Future<void> _handleSignUp() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    if (_emailError != null || _usernameError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fix validation errors'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
     setState(() => _isLoading = true);
 
+    final supabase = Supabase.instance.client;
+    final invitationCode = _invitationCodeController.text.trim();
+    final email = _emailController.text.trim();
+    final username = _userNameController.text.trim();
+    final password = _passwordController.text.trim();
+
     try {
-      final supabase = Supabase.instance.client;
-      final invitationCode = _invitationCodeController.text.trim();
-      final email = _emailController.text.trim();
-      final password = _passwordController.text.trim();
-      final username = _userNameController.text.trim();
+      // Step 1: Validate all data with the new SQL function
+      log('Validating sign up data...');
+      await supabase.rpc('validate_signup_data', params: {
+        'p_invitation_code': invitationCode,
+        'p_user_email': email,
+        'p_user_username': username,
+      });
+      log('Validation successful.');
 
-      await supabase.rpc(
-        'validate_complete_signup',
-        params: {
-          'p_invitation_code': invitationCode,
-          'p_user_email': email,
-          'p_user_username': username,
-        },
-      ).timeout(const Duration(seconds: 10));
-
-      print('Validation passed - email is available');
-
-      final AuthResponse response = await supabase.auth.signUp(
+      // Step 2: Create the user in auth.users (but NOT in profiles yet)
+      final response = await supabase.auth.signUp(
         email: email,
-        password: password, 
-        data: {
-          'username': username,
-          'invitation_code': invitationCode,
-        },
+        password: password,
+        // NO profile data here. Profile is created AFTER OTP.
       );
 
-      print('User created successfully with ID: ${response.user?.id}');
+      log('Auth user created successfully: ${response.user?.id}');
 
-      if (response.user != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('pending_invitation_code', invitationCode);
-        await prefs.setString('pending_username', username);
-
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => OtpScreen(
+      if (mounted && response.user != null) {
+        // Step 3: Navigate to OTP screen for verification
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => OtpScreen(
               email: email,
               invitationCode: invitationCode,
               username: username,
               isSignUp: true,
-            )),
-          );
-        }
+            ),
+          ),
+        );
       } else {
-         print('Sign up completed, but no user object returned from supabase.auth.signUp.');
-         throw Exception('User creation failed - no user returned from signUp and no exception thrown.');
+        throw Exception('Sign up failed: no user was returned after sign up.');
       }
-
     } catch (e) {
-      print('Sign up error: $e');
-      
+      log('Sign up error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_getUserFriendlyError(e.toString())),
-            backgroundColor: Colors.red,
+            content: Text("Sign up failed: ${e.toString().split('Exception: ').last}"),
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
-  }
-
-  String _getUserFriendlyError(String error) {
-    if (error.contains('Invalid invitation code')) return 'Invalid invitation code.';
-    if (error.contains('already been used twice')) return 'This invitation code has been used twice.';
-    if (error.contains('User already registered')) {
-        return 'This email is already registered. Please try logging in.';
-    }
-    if (error.contains('profiles_email_key') || error.contains('profile_email_unique')) {
-        return 'This email is already associated with a profile.';
-    }
-    if (error.contains('profiles_username_key') || error.contains('profile_username_unique')) {
-        return 'This username is already taken.';
-    }
-    if (error.contains('duplicate key value violates unique constraint')) {
-        return 'This email or username is already registered.';
-    }
-    return 'Sign up failed. Please try again.';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // Keep original background color for the Scaffold itself
-      body: SafeArea( 
-        child: Stack( 
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Stack(
           children: [
-            // Wallpaper Layer
             Positioned(
-              top: -200.0, // Half of the logo's height (400.0 / 2)
-              left: 0.0,   // Spans full width
-              right: 0.0,  // Spans full width
+              top: -200.0,
+              left: 0.0,
+              right: 0.0,
               child: Opacity(
                 opacity: 0.3,
-                child: Align( // To center the image within the Positioned widget
-                  alignment: Alignment.center, 
+                child: Align(
+                  alignment: Alignment.center,
                   child: Image.asset(
-                    'assets/images/logo.png', // Path to your logo
-                    height: 400.0, // You can change this
-                    width: 400.0,  // You can change this
-                    fit: BoxFit.contain, // Ensures aspect ratio is maintained
+                    'assets/images/logo.png',
+                    height: 400.0,
+                    width: 400.0,
+                    fit: BoxFit.contain,
                   ),
                 ),
               ),
             ),
-            // Original Content Layer
             SingleChildScrollView(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 39.0), // Changed from .0 to 39.0 for consistency
+                padding: const EdgeInsets.symmetric(horizontal: 39.0),
                 child: Form(
                   key: _formKey,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const SizedBox(height: 60), // Restored top margin
-                      // Foreground logo and its SizedBox removed
+                      const SizedBox(height: 60),
                       const Text(
                         'circle',
                         textAlign: TextAlign.center,
@@ -253,7 +151,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           fontWeight: FontWeight.w400,
                         ),
                       ),
-                      const SizedBox(height: 30), 
+                      const SizedBox(height: 30),
                       TextFormField(
                         controller: _invitationCodeController,
                         decoration: _buildInputDecoration('Invitation Code'),
@@ -262,10 +160,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: _userNameController,
-                        decoration: _buildInputDecoration('Username').copyWith(
-                          errorText: _usernameError,
-                          suffixIcon: _checkingAvailability ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF558DCA))) : null,
-                        ),
+                        decoration: _buildInputDecoration('Username'),
                         validator: (v) {
                           if (v == null || v.isEmpty) return 'Please enter username';
                           if (v.length < 3) return 'Username must be at least 3 characters';
@@ -276,10 +171,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       TextFormField(
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
-                        decoration: _buildInputDecoration('Email').copyWith(
-                          errorText: _emailError,
-                          suffixIcon: _checkingAvailability ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF558DCA))) : null,
-                        ),
+                        decoration: _buildInputDecoration('Email'),
                         validator: (v) {
                           if (v == null || v.isEmpty) return 'Please enter email';
                           final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');
@@ -387,7 +279,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(55),
-        borderSide: const BorderSide(width: 2, color: Color(0xFF5F5F5F)), // Matched focusedErrorBorder to enabled/focused border for consistency
+        borderSide: const BorderSide(width: 2, color: Color(0xFF5F5F5F)),
       ),
     );
   }

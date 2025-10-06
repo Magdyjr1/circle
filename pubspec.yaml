@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.9.2 <4.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -13,13 +13,17 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_svg: ^2.0.7
   supabase_flutter: ^2.10.1
+  google_sign_in: ^7.2.0
+  image_picker: ^1.0.7
+  image_cropper: ^11.0.0
+
+
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^3.0.0
   flutter_launcher_icons: ^0.14.4 # Added package
-  google_sign_in: ^7.2.0
 
 flutter:
   uses-material-design: true
@@ -42,6 +46,6 @@ flutter:
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
-  image_path: "assets/images/logoth.png"
-  # adaptive_icon_background: "#ffffff" # Optional: if you want a specific background for Android adaptive icons
+  image_path: "assets/images/app_logo.png"
+  adaptive_icon_background: "#205692" # Optional: if you want a specific background for Android adaptive icons
   # adaptive_icon_foreground: "assets/images/logo_foreground.png" # Optional: if you want a different foreground for Android adaptive icons

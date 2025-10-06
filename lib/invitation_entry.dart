@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'dart:developer'; // For log
-import 'home.dart'; // For navigation
+import 'dart:developer';
+import 'profile.dart';
 
 class InvitationEntry extends StatefulWidget {
-  final User user; // Authenticated user from Supabase
+  final User user;
   const InvitationEntry({Key? key, required this.user}) : super(key: key);
 
   @override
@@ -19,34 +19,6 @@ class _InvitationEntryState extends State<InvitationEntry> {
 
   bool _isLoading = false;
   String? _errorMessage;
-  bool _isAutoSubmitting = false;
-
-  // --- IMPORTANT: DEFINE YOUR LIMITS HERE ---
-  static const int MAX_USAGE_LIMIT = 2; // Example: Code can be used by 2 different users.
-
-  @override
-  void initState() {
-    super.initState();
-    // Check for pre-filled data from userMetadata
-    final metadata = widget.user.userMetadata;
-    if (metadata != null) {
-      final String? prefilledUsername = metadata['username'] as String?;
-      final String? prefilledInviteCode = metadata['invitation_code'] as String?;
-
-      if (prefilledUsername != null && prefilledUsername.isNotEmpty && prefilledInviteCode != null && prefilledInviteCode.isNotEmpty) {
-        _usernameController.text = prefilledUsername;
-        _invitationCodeController.text = prefilledInviteCode;
-        log('Prefilled data found. Preparing for auto-submission.');
-        setState(() {
-          _isAutoSubmitting = true;
-        });
-        // Call submit after the first frame is built
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _submitInvitation();
-        });
-      }
-    }
-  }
 
   @override
   void dispose() {
@@ -56,8 +28,7 @@ class _InvitationEntryState extends State<InvitationEntry> {
   }
 
   Future<void> _submitInvitation() async {
-    // If this is a manual submission, validate the form. For auto-submission, the controllers are pre-filled.
-    if (!_isAutoSubmitting && !_formKey.currentState!.validate()) {
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
@@ -68,92 +39,42 @@ class _InvitationEntryState extends State<InvitationEntry> {
 
     final enteredCode = _invitationCodeController.text.trim();
     final enteredUsername = _usernameController.text.trim();
-    
-    int? validInvitationIdAsInt; 
 
     try {
-      // 1. Validate invitation code
-      log('Validating invitation code: $enteredCode for user ID: ${widget.user.id}');
-      final invitationResponse = await _supabase
-          .from('invitation_codes')
-          .select('id, usage_count, invited_users') 
-          .eq('code', enteredCode)
-          .maybeSingle();
+      // Step 1: Perform the same validation as the sign-up screen
+      log('Validating invitation data for Google user...');
+      await _supabase.rpc('validate_signup_data', params: {
+        'p_invitation_code': enteredCode,
+        'p_user_email': widget.user.email!,
+        'p_user_username': enteredUsername,
+      });
+      log('Validation successful.');
 
-      if (invitationResponse == null) {
-        throw 'Invalid invitation code.';
-      }
-      
-      validInvitationIdAsInt = invitationResponse['id'] as int?; 
-      if (validInvitationIdAsInt == null) {
-        throw 'Invitation code ID not found (this should not happen if record exists).';
-      }
+      // Step 2: Call the all-in-one registration function
+      log('Calling complete_user_registration for Google user...');
+      await _supabase.rpc('complete_user_registration', params: {
+        'p_invitation_code': enteredCode,
+        'p_username': enteredUsername,
+      });
+      log('Registration finalized successfully.');
 
-      final currentUsageCount = invitationResponse['usage_count'] as int? ?? 0;
-      List<String> invitedUserIds = [];
-      if (invitationResponse['invited_users'] != null) {
-        invitedUserIds = (invitationResponse['invited_users'] as List).map((item) => item.toString()).toList();
-      }
-
-      if (invitedUserIds.contains(widget.user.id)) {
-        log('Warning: User ${widget.user.id} trying to use code $enteredCode which they are already listed under. This is a retry scenario.');
-      } else if (currentUsageCount >= MAX_USAGE_LIMIT) { 
-        throw 'This invitation code has reached its maximum usage limit.';
-      }
-      
-      log('Invitation code validated. ID: $validInvitationIdAsInt');
-
-      // 2. Check username availability
-      log('Checking username availability: $enteredUsername');
-      final usernameResponse = await _supabase
-          .from('profiles')
-          .select('id') 
-          .eq('username', enteredUsername)
-          .maybeSingle();
-
-      if (usernameResponse != null && usernameResponse['id'] != widget.user.id) {
-        throw 'Username "$enteredUsername" is already taken. Please choose another.';
-      }
-      log('Username "$enteredUsername" is available.');
-
-      // 3. Create or Update profile in 'profiles' table using upsert
-      log('Upserting profile for user: ${widget.user.id} with username: $enteredUsername');
-      await _supabase.from('profiles').upsert({
-        'id': widget.user.id, 
-        'username': enteredUsername,
-        'email': widget.user.email,
-      }, onConflict: 'id');
-      log('Profile created/updated successfully.');
-
-      // 4. Update invitation code if user is new to this code
-      if (!invitedUserIds.contains(widget.user.id)) {
-        log('Updating invitation code $validInvitationIdAsInt for new user ${widget.user.id}.');
-        invitedUserIds.add(widget.user.id);
-        await _supabase
-            .from('invitation_codes')
-            .update({
-              'usage_count': currentUsageCount + 1,
-              'invited_users': invitedUserIds,
-            })
-            .eq('id', validInvitationIdAsInt); 
-        log('Invitation code updated successfully.');
-      }
-      
-      log('Signup completion successful. Navigating to Home with username: $enteredUsername');
+      // Step 3: Navigate to Profile Screen on success
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => Home(username: enteredUsername)),
+          MaterialPageRoute(
+            builder: (context) => ProfileScreen(initialUsername: enteredUsername),
+          ),
           (route) => false,
         );
       }
-
-    } catch (e) {
-      log('Error during signup process: $e');
+    } on Exception catch (e) {
+      log('Error during invitation submission: $e');
       if (mounted) {
         setState(() {
-          _errorMessage = e.toString();
-          // If auto-submission fails, show the form so the user can see the error.
-          _isAutoSubmitting = false; 
+          final message = e.toString().contains('Exception: ')
+              ? e.toString().split('Exception: ').last
+              : e.toString();
+          _errorMessage = message;
         });
       }
     } finally {
@@ -165,29 +86,8 @@ class _InvitationEntryState extends State<InvitationEntry> {
     }
   }
 
- @override
+  @override
   Widget build(BuildContext context) {
-    // If auto-submitting, show a loading screen.
-    if (_isAutoSubmitting && _isLoading) {
-      return const Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text(
-                'Completing sign up...',
-                style: TextStyle(fontSize: 18, color: Color(0xFF1B2E47)),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    
-    // Otherwise, show the form for manual entry (Google Sign-In) or to display errors.
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -210,18 +110,16 @@ class _InvitationEntryState extends State<InvitationEntry> {
                 ),
               ),
             ),
-            // Floating back button
-            if (!_isAutoSubmitting)
-              Positioned(
-                top: 0,
-                left: 10,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Color(0xFF1B2E47)),
-                  onPressed: () async {
-                    await _supabase.auth.signOut();
-                  },
-                ),
+            Positioned(
+              top: 0,
+              left: 10,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Color(0xFF1B2E47)),
+                onPressed: () async {
+                  await _supabase.auth.signOut();
+                },
               ),
+            ),
             Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 30.0, vertical: 20.0),
@@ -243,7 +141,7 @@ class _InvitationEntryState extends State<InvitationEntry> {
                       ),
                       const SizedBox(height: 15),
                       Text(
-                        'You are signed in as: ${widget.user.email ?? 'N/A'}\nPlease complete your registration.',
+                        "You are signed in as: ${widget.user.email ?? 'N/A'}\nPlease complete your registration.",
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Color(0xFF1B2E47),
